@@ -13,5 +13,6 @@
     - **SHA256**: `9062CD20DCD624A998381CA5F5B1514D9A956289E93CF759FD1A6A9E532874ED`
 
 
-### 2. 이 리포는 에셋 추출용이라 프롬프트 템플릿 파일은 안 다루나 관련 정보가 궁금하면 다음 리포를 참조.
-- **GitHub**: [https://github.com/snuff8729/RisuExtractUtil](https://github.com/snuff8729/RisuExtractUtil)
+### 2. 이 리포는 에셋 추출용이라 프롬프트 템플릿 파일은 안 다루나 관련 정보가 궁금하면 다음 리포들을 참조.
+- **GitHub 1**: [https://github.com/snuff8729/RisuExtractUtil](https://github.com/snuff8729/RisuExtractUtil)
+- **GitHub 2**: [https://github.com/noelkim12/risu-resource-manager/blob/main/docs/risup_cherrypick.md](https://github.com/noelkim12/risu-resource-manager/blob/main/docs/risup_cherrypick.md)
