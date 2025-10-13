@@ -113,25 +113,37 @@ async function handleFileSelect(file) {
             const assetLen = readLength();
             const assetDataPacked = readData(assetLen);
             const assetDataDecoded = await decodeRPack(assetDataPacked);
+            // --- 교체할 코드 (새로운 코드) ---
             const [assetId, _, assetType] = moduleInfo.assets[assetIndex];
 
             let filename = assetId;
-            const knownExtensions = /\.(png|jpg|jpeg|gif|webp)$/i;
+            let extension = null;
 
-            if (!knownExtensions.test(assetId)) {
-                let extension = null;
-                if (assetType && typeof assetType === 'string' && assetType.length > 0 && assetType.length < 5) {
-                    extension = assetType.split('/').pop();
-                }
-                if (!extension) {
-                    extension = getExtensionFromBytes(assetDataDecoded);
-                }
-                if (extension) {
-                    filename = `${filename}.${extension}`;
+            // 1. assetType 필드에서 확장자를 우선적으로 가져옵니다. (예: 'image/png' -> 'png')
+            if (assetType && typeof assetType === 'string') {
+                const typeParts = assetType.split('/');
+                if (typeParts.length > 0) {
+                    const potentialExt = typeParts.pop();
+                    // 간단한 유효성 검사를 통해 'png' 같은 짧은 확장자만 사용하도록 합니다.
+                    if (potentialExt && potentialExt.length > 0 && potentialExt.length < 5) {
+                        extension = potentialExt;
+                    }
                 }
             }
 
+            // 2. assetType에서 확장자를 얻지 못했다면, 파일의 바이트 시그니처를 통해 추측합니다.
+            if (!extension) {
+                extension = getExtensionFromBytes(assetDataDecoded);
+            }
+
+            // 3. 유효한 확장자를 찾았고, 원래 파일 이름이 그 확장자로 끝나지 않는 경우에만 덧붙입니다.
+            //    이렇게 하면 'image.png'에 'png'가 중복으로 붙지 않고, 'image.webp'에는 'png'가 정상적으로 붙습니다.
+            if (extension && !filename.toLowerCase().endsWith(`.${extension.toLowerCase()}`)) {
+                filename = `${filename}.${extension}`;
+            }
+
             zip.file(filename, assetDataDecoded);
+            // --- 여기까지 ---
             assetIndex++;
 
             // --- 추가된 부분 시작 ---
