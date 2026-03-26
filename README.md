@@ -2,8 +2,6 @@
 
 Risu Asset Extractor는 RisuAI 파일을 브라우저에서 읽기 전용으로 열어 보는 도구입니다.
 
-이 저장소의 GitHub Pages 주소를 그대로 사용하며, 서버 없이 브라우저 안에서 봇 카드, 모듈, 프리셋, 에셋을 확인하고 다운로드할 수 있습니다.
-
 배포 주소: [https://inorinatsume.github.io/RisuAI-Asset-Extractor/](https://inorinatsume.github.io/RisuAI-Asset-Extractor/)
 
 ## 할 수 있는 일
@@ -28,13 +26,10 @@ tests/
 
 ## 기술 스택
 
-- Svelte 4
+- Svelte 5
 - SvelteKit 2
 - TypeScript
 - Vite
-- JSZip
-- fflate
-- msgpackr
 
 ## 로컬 실행
 
@@ -43,22 +38,12 @@ npm install
 npm run dev
 ```
 
-Vite가 보여주는 로컬 주소를 연 뒤, 지원되는 파일을 페이지에 드롭하면 됩니다.
-
 ## 빌드
 
 ```cmd
 npm run build
 npm run preview
 ```
-
-프로덕션 빌드는 `RisuAI-Asset-Extractor` GitHub Pages 경로를 기준으로 생성됩니다.
-
-## 주의 사항
-
-- 업로드한 파일은 신뢰하지 않는 입력으로 취급합니다.
-- 프로덕션에서는 로그를 최소화합니다.
-- 추적되는 파일에는 개인 계정 정보나 불필요한 개인정보를 남기지 않습니다.
 
 ## 크레딧
 
