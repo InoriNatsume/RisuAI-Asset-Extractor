@@ -1,0 +1,39 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# SvelteKit
+.svelte-kit/
+build/
+
+# 빌드
+dist/
+*.tsbuildinfo
+
+# 환경 변수
+.env
+.env.*
+!.env.example
+
+# 테스트
+coverage/
+
+# 테스트 파일
+tests/test_file/
+*.charx
+*.risum
+*.risup
+*.risupreset
+test_*.png
+test_*.jpg
+test_*.jpeg
+
+# 추출 결과물
+scripts/output/
+
+# 기타
+.DS_Store
+Thumbs.db
+*.log

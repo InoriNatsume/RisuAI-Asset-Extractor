@@ -1,0 +1,105 @@
+/* Risu Asset Extractor Global Styles */
+
+:root {
+  /* 기본 테마 (다크) */
+  --rs-bg: #1a1a1a;
+  --rs-bg-dark: #121212;
+  --rs-bg-light: #252525;
+  --rs-border: #333;
+  --rs-border-light: #444;
+  --rs-text: #fff;
+  --rs-text-muted: #888;
+  --rs-text-dim: #666;
+  
+  /* 액센트 */
+  --rs-primary: #4682B4;
+  --rs-primary-hover: #5a9fd4;
+  --rs-success: #27ae60;
+  --rs-error: #e74c3c;
+  --rs-warning: #f39c12;
+  
+  /* 시뮬레이터 */
+  --rs-trace-bg: rgba(74, 144, 217, 0.1);
+  --rs-selected: #333;
+  
+  /* 폰트 */
+  --rs-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
+  --rs-font-mono: 'Consolas', 'Monaco', 'Menlo', monospace;
+  
+  /* 사이즈 */
+  --rs-radius: 6px;
+  --rs-radius-lg: 10px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--rs-font);
+  background: var(--rs-bg);
+  color: var(--rs-text);
+  line-height: 1.5;
+}
+
+body {
+  overflow: hidden;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--rs-bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rs-border-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--rs-text-muted);
+}
+
+/* 기본 버튼 */
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* 입력 필드 */
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* 코드 */
+code, pre {
+  font-family: var(--rs-font-mono);
+}
+
+/* 포커스 스타일 */
+:focus-visible {
+  outline: 2px solid var(--rs-primary);
+  outline-offset: 2px;
+}
+
+/* 유틸리티 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
