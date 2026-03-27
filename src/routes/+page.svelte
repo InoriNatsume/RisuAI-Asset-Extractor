@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { detectInputFormat, parseCharx, parseRisum, parsePresetAuto, parsePng, parseJpeg } from '$lib/core';
   import { logger } from '$lib/core/logger';
   import EditorScreen from '$lib/components/editor/EditorScreen.svelte';
+
+  const repositoryUrl = 'https://github.com/InoriNatsume/RisuAI-Asset-Extractor';
 
   let fileData: any = null;
   let fileName = '';
@@ -712,6 +713,18 @@
   <!-- 드롭존 모드 -->
   <main>
   <header>
+    <a
+      class="repo-link"
+      href={repositoryUrl}
+      target="_blank"
+      rel="noreferrer"
+      aria-label="Open the GitHub repository"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.85 10.9.57.1.78-.25.78-.56 0-.28-.01-1.19-.02-2.16-3.19.69-3.86-1.35-3.86-1.35-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.23-1.27-5.23-5.68 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.47.11-3.06 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.59.23 2.77.11 3.06.74.8 1.18 1.83 1.18 3.09 0 4.42-2.69 5.38-5.25 5.66.41.35.78 1.04.78 2.11 0 1.52-.01 2.75-.01 3.13 0 .31.21.67.79.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+      </svg>
+      <span>GitHub</span>
+    </a>
     <h1>Risu Asset Extractor</h1>
     <p class="subtitle">Read-only viewer for RisuAI cards, modules, presets, and assets</p>
   </header>
@@ -777,8 +790,43 @@
   }
 
   header {
+    position: relative;
     text-align: center;
     margin-bottom: 2rem;
+  }
+
+  .repo-link {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    background: var(--surface);
+    transition: border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  }
+
+  .repo-link:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+    transform: translateY(-1px);
+  }
+
+  .repo-link svg {
+    width: 1rem;
+    height: 1rem;
+    fill: currentColor;
+    flex: 0 0 auto;
+  }
+
+  .repo-link span {
+    font-size: 0.875rem;
+    font-weight: 600;
   }
 
   h1 {
@@ -928,6 +976,20 @@
     color: #fca5a5;
     font-size: 0.875rem;
     white-space: pre-wrap;
+  }
+
+  @media (max-width: 640px) {
+    header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .repo-link {
+      position: static;
+      order: -1;
+    }
   }
 
 </style>
