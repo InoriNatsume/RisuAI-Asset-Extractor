@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { debugLog } from '$lib/core/logger';
 
   export let data: any;
   export let fileType: 'charx' | 'risum' | 'risup';
@@ -61,7 +62,7 @@
     // RisuAI 확장 필드
     const risuExt = cardData?.extensions?.risuai || {};
     
-    console.log('[InfoTab] charx 필드 로드:', {
+    debugLog('[InfoTab] charx 필드 로드:', {
       name: cardData?.name,
       descLen: cardData?.description?.length,
       firstMesLen: cardData?.first_mes?.length,

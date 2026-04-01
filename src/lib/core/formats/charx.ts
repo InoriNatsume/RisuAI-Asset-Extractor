@@ -5,6 +5,10 @@ import type { CharacterCard, CharacterCardV3 } from '../types/character';
 const PNG_SIGNATURE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_SOI = new Uint8Array([0xff, 0xd8, 0xff]);
 const ZIP_LOCAL_HEADER = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+const MAX_ARCHIVE_COMPRESSED_BYTES = 512 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRY_COUNT = 5000;
+const MAX_ARCHIVE_ENTRY_BYTES = 128 * 1024 * 1024;
+const MAX_ARCHIVE_TOTAL_BYTES = 768 * 1024 * 1024;
 
 const utf8Decoder = new TextDecoder('utf-8');
 const latin1Decoder = new TextDecoder('latin1');
@@ -187,19 +191,60 @@ export function normalizeToV3(card: CharacterCard): CharacterCardV3 {
 }
 
 async function parseZipContainer(zipData: Uint8Array): Promise<CharxResult> {
+  if (zipData.byteLength > MAX_ARCHIVE_COMPRESSED_BYTES) {
+    throw new CharxParseError(
+      `Archive is too large to parse safely (${formatByteLimit(MAX_ARCHIVE_COMPRESSED_BYTES)} compressed limit).`
+    );
+  }
+
   const zip = await JSZip.loadAsync(zipData);
   const raw: Record<string, Uint8Array> = {};
   const assets = new Map<string, Uint8Array>();
 
   let card: CharacterCard | null = null;
+  let extractedTotalBytes = 0;
+  let declaredTotalBytes = 0;
+  const fileEntries = Object.entries(zip.files).filter(([, zipEntry]) => !zipEntry.dir);
 
-  for (const [entryName, zipEntry] of Object.entries(zip.files)) {
-    if (zipEntry.dir) {
-      continue;
+  if (fileEntries.length > MAX_ARCHIVE_ENTRY_COUNT) {
+    throw new CharxParseError(
+      `Archive contains too many files to parse safely (${MAX_ARCHIVE_ENTRY_COUNT} entry limit).`
+    );
+  }
+
+  for (const [entryName, zipEntry] of fileEntries) {
+    const declaredSize = getDeclaredUncompressedSize(zipEntry);
+    if (declaredSize != null) {
+      if (declaredSize > MAX_ARCHIVE_ENTRY_BYTES) {
+        throw new CharxParseError(
+          `Archive entry is too large to parse safely (${formatByteLimit(MAX_ARCHIVE_ENTRY_BYTES)} per-file limit).`
+        );
+      }
+
+      declaredTotalBytes += declaredSize;
+      if (declaredTotalBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+        throw new CharxParseError(
+          `Archive expands beyond the safe parsing limit (${formatByteLimit(MAX_ARCHIVE_TOTAL_BYTES)} total limit).`
+        );
+      }
     }
 
     const safePath = sanitizeArchiveEntryPath(entryName);
     const bytes = await zipEntry.async('uint8array');
+
+    if (bytes.length > MAX_ARCHIVE_ENTRY_BYTES) {
+      throw new CharxParseError(
+        `Archive entry is too large to parse safely (${formatByteLimit(MAX_ARCHIVE_ENTRY_BYTES)} per-file limit).`
+      );
+    }
+
+    extractedTotalBytes += bytes.length;
+    if (extractedTotalBytes > MAX_ARCHIVE_TOTAL_BYTES) {
+      throw new CharxParseError(
+        `Archive expands beyond the safe parsing limit (${formatByteLimit(MAX_ARCHIVE_TOTAL_BYTES)} total limit).`
+      );
+    }
+
     raw[safePath] = bytes;
 
     if (safePath === 'card.json') {
@@ -215,6 +260,29 @@ async function parseZipContainer(zipData: Uint8Array): Promise<CharxResult> {
   }
 
   return { card, assets, raw };
+}
+
+function getDeclaredUncompressedSize(zipEntry: JSZip.JSZipObject): number | null {
+  const rawEntry = zipEntry as JSZip.JSZipObject & {
+    _data?: { uncompressedSize?: number | string };
+  };
+  const rawSize = rawEntry._data?.uncompressedSize;
+
+  if (typeof rawSize === 'number' && Number.isFinite(rawSize)) {
+    return rawSize;
+  }
+
+  if (typeof rawSize === 'string') {
+    const parsed = Number(rawSize);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function formatByteLimit(bytes: number): string {
+  const mib = bytes / (1024 * 1024);
+  return `${Math.round(mib)} MiB`;
 }
 
 function extractAssetBytes(

@@ -4,10 +4,13 @@
  * - 스텔스 EXIF (NAI 스테가노그래피)
  */
 
+import { unzlibSync } from 'fflate';
+
 import type { PngTextChunks, StealthBitsResult, ExtractedMetadata } from './types';
 import { detectModelFromMeta, extractComfyPayload } from './detect';
 import { parseNovelAI } from './schema/novelai';
 import { parseComfyPrompt, parseComfyWorkflow } from './schema/comfyui';
+import { debugLog } from '../logger';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -16,6 +19,7 @@ const SIG_ALPHA = 'stealth_pnginfo';
 const SIG_ALPHA_COMP = 'stealth_pngcomp';
 const SIG_RGB = 'stealth_rgbinfo';
 const SIG_RGB_COMP = 'stealth_rgbcomp';
+const MAX_IMAGE_DECODE_PIXELS = 40_000_000;
 
 /**
  * 이미지에서 통합 메타데이터 추출
@@ -27,15 +31,15 @@ export async function extractImageMetadata(source: File | Blob | ArrayBuffer | s
   
   // 실제 파일 형식 감지 (magic bytes)
   const format = detectImageFormat(bytes);
-  console.log('[exif] 이미지 형식 감지:', format, '(버퍼 크기:', buffer.byteLength, ')');
+  debugLog('[exif] 이미지 형식 감지:', format, '(버퍼 크기:', buffer.byteLength, ')');
   
   // PNG 텍스트 청크 추출 (PNG만)
   let pngText: PngTextChunks = {};
   if (format === 'png') {
     pngText = parsePngTextChunks(buffer);
-    console.log('[exif] PNG 텍스트 청크:', Object.keys(pngText));
+    debugLog('[exif] PNG 텍스트 청크:', Object.keys(pngText));
   } else {
-    console.log('[exif] PNG가 아님 - 텍스트 청크 건너뜀');
+    debugLog('[exif] PNG가 아님 - 텍스트 청크 건너뜀');
   }
   
   // 스텔스 EXIF 추출 - 모든 이미지 형식에서 시도
@@ -46,7 +50,7 @@ export async function extractImageMetadata(source: File | Blob | ArrayBuffer | s
   
   // 모델 탐지
   const detection = detectModelFromMeta(pngText, stealthExif, null);
-  console.log('[exif] 모델 탐지:', detection);
+  debugLog('[exif] 모델 탐지:', detection);
   
   // 정규화
   let normalized: ExtractedMetadata['normalized'] = null;
@@ -55,7 +59,7 @@ export async function extractImageMetadata(source: File | Blob | ArrayBuffer | s
     normalized = parseNovelAI(stealthExif);
   } else if (detection.kind === 'comfy') {
     const { prompt, workflow } = extractComfyPayload(pngText);
-    console.log('[exif] ComfyUI payload:', { hasPrompt: !!prompt, hasWorkflow: !!workflow });
+    debugLog('[exif] ComfyUI payload:', { hasPrompt: !!prompt, hasWorkflow: !!workflow });
     if (prompt) {
       normalized = parseComfyPrompt(prompt);
     }
@@ -77,7 +81,7 @@ export async function extractImageMetadata(source: File | Blob | ArrayBuffer | s
 async function extractStealthExifFromBuffer(buffer: ArrayBuffer, mimeType: string): Promise<unknown> {
   try {
     const bytes = new Uint8Array(buffer);
-    console.log('[exif] extractStealthExifFromBuffer 시작:', {
+    debugLog('[exif] extractStealthExifFromBuffer 시작:', {
       bufferSize: buffer.byteLength,
       mimeType,
       firstBytes: Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')
@@ -85,18 +89,18 @@ async function extractStealthExifFromBuffer(buffer: ArrayBuffer, mimeType: strin
     
     const imageData = await loadImageData(bytes, mimeType);
     if (!imageData) {
-      console.log('[exif] ImageData 로드 실패');
+      debugLog('[exif] ImageData 로드 실패');
       return null;
     }
     
-    console.log('[exif] ImageData 로드 완료:', {
+    debugLog('[exif] ImageData 로드 완료:', {
       width: imageData.width,
       height: imageData.height,
       dataLength: imageData.data.length
     });
     
     const result = await extractStealthExif(imageData);
-    console.log('[exif] 스텔스 EXIF 결과:', result ? 'found' : 'null', result);
+    debugLog('[exif] 스텔스 EXIF 결과:', result ? 'found' : 'null', result);
     return result;
   } catch (e) {
     console.error('[exif] extractStealthExifFromBuffer 오류:', e);
@@ -243,7 +247,7 @@ export function extractStealthBits(imageData: ImageData): StealthBitsResult | nu
         if (indexA === SIG_ALPHA.length * 8) {
           const decoded = binToUtf8(bufferA);
           if (debugLogOnce) {
-            console.log('[exif] Alpha signature check:', { decoded, expected: SIG_ALPHA, match: decoded === SIG_ALPHA || decoded === SIG_ALPHA_COMP });
+            debugLog('[exif] Alpha signature check:', { decoded, expected: SIG_ALPHA, match: decoded === SIG_ALPHA || decoded === SIG_ALPHA_COMP });
           }
           if (decoded === SIG_ALPHA || decoded === SIG_ALPHA_COMP) {
             confirmingSignature = false;
@@ -258,7 +262,7 @@ export function extractStealthBits(imageData: ImageData): StealthBitsResult | nu
         if (confirmingSignature && indexRGB === SIG_RGB.length * 8) {
           const decoded = binToUtf8(bufferRGB);
           if (debugLogOnce) {
-            console.log('[exif] RGB signature check:', { decoded, expected: SIG_RGB, match: decoded === SIG_RGB || decoded === SIG_RGB_COMP });
+            debugLog('[exif] RGB signature check:', { decoded, expected: SIG_RGB, match: decoded === SIG_RGB || decoded === SIG_RGB_COMP });
             debugLogOnce = false;
           }
           if (decoded === SIG_RGB || decoded === SIG_RGB_COMP) {
@@ -356,9 +360,9 @@ export async function decodeStealthPayload(bitsResult: StealthBitsResult): Promi
  * 이미지에서 스텔스 EXIF 추출 (통합)
  */
 export async function extractStealthExif(imageData: ImageData): Promise<unknown | null> {
-  console.log('[exif] extractStealthExif 시작');
+  debugLog('[exif] extractStealthExif 시작');
   const bits = extractStealthBits(imageData);
-  console.log('[exif] extractStealthBits 결과:', bits ? { mode: bits.mode, compressed: bits.compressed, dataLen: bits.binaryData.length } : 'null');
+  debugLog('[exif] extractStealthBits 결과:', bits ? { mode: bits.mode, compressed: bits.compressed, dataLen: bits.binaryData.length } : 'null');
   if (!bits) return null;
   return decodeStealthPayload(bits);
 }
@@ -378,6 +382,19 @@ export async function loadImageData(bytes: Uint8Array, mimeType: string): Promis
       const img = new Image();
       img.onload = () => {
         try {
+          const pixelCount = img.width * img.height;
+          if (!img.width || !img.height || pixelCount > MAX_IMAGE_DECODE_PIXELS) {
+            debugLog('[exif] 이미지가 너무 커서 ImageData 추출을 건너뜀:', {
+              width: img.width,
+              height: img.height,
+              pixelCount,
+              maxPixels: MAX_IMAGE_DECODE_PIXELS
+            });
+            URL.revokeObjectURL(url);
+            resolve(null);
+            return;
+          }
+
           const canvas = document.createElement('canvas');
           canvas.width = img.width;
           canvas.height = img.height;
@@ -512,18 +529,7 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
  */
 function inflateToString(compressed: Uint8Array): string | null {
   try {
-    // 브라우저 DecompressionStream 사용
-    const ds = new DecompressionStream('deflate');
-    const writer = ds.writable.getWriter();
-    writer.write(new Uint8Array(toArrayBuffer(compressed)));
-    writer.close();
-    
-    const reader = ds.readable.getReader();
-    const chunks: Uint8Array[] = [];
-    
-    // 동기적으로 처리할 수 없으므로 null 반환하고 async 버전 사용 권장
-    // 여기서는 간단히 시도
-    return null;
+    return new TextDecoder('utf-8').decode(unzlibSync(compressed));
   } catch {
     return null;
   }

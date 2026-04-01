@@ -11,6 +11,10 @@
   import PresetParamsTab from './tabs/PresetParamsTab.svelte';
   import PresetPromptsTab from './tabs/PresetPromptsTab.svelte';
   import PresetAdvancedTab from './tabs/PresetAdvancedTab.svelte';
+  import {
+    performGlobalSearch,
+    type GlobalSearchResult
+  } from '$lib/core/search/globalSearch';
 
   export let data: any;
   export let fileType: 'charx' | 'risum' | 'risup';
@@ -149,6 +153,12 @@
     hasChanges = true;
   }
 
+  function handleAssetChange(event: CustomEvent<any>) {
+    // Keep asset-only cleanup state in the current session so downloads use the updated names.
+    editedData = event.detail;
+    hasChanges = false;
+  }
+
   function handleSave() {
     dispatch('save', editedData);
     hasChanges = false;
@@ -163,16 +173,6 @@
   }
 
   // ========== 전역 검색 시스템 ==========
-  interface GlobalSearchResult {
-    tab: string;
-    tabLabel: string;
-    itemIndex: number;
-    itemName: string;
-    field: string;
-    matchText: string;
-    matchCount: number;
-  }
-
   let globalSearchQuery = '';
   let globalSearchVisible = false;
   let globalSearchResults: GlobalSearchResult[] = [];
@@ -187,147 +187,10 @@
   }
 
   $: if (globalSearchQuery && editedData) {
-    globalSearchResults = performGlobalSearch(editedData, globalSearchQuery);
+    globalSearchResults = performGlobalSearch(editedData, fileType, globalSearchQuery);
     selectedSearchIndex = 0;
   } else {
     globalSearchResults = [];
-  }
-
-  function performGlobalSearch(data: any, query: string): GlobalSearchResult[] {
-    const results: GlobalSearchResult[] = [];
-    const lowerQuery = query.toLowerCase();
-
-    // 로어북 검색
-    const lorebook = data?.module?.lorebook || data?.lorebook || [];
-    lorebook.forEach((item: any, idx: number) => {
-      const fields = [
-        { name: 'key', value: item.key || '' },
-        { name: 'secondkey', value: item.secondkey || '' },
-        { name: 'comment', value: item.comment || '' },
-        { name: 'content', value: item.content || '' },
-      ];
-      fields.forEach(f => {
-        const count = countMatches(f.value, lowerQuery);
-        if (count > 0) {
-          results.push({
-            tab: 'lorebook',
-            tabLabel: '📚 로어북',
-            itemIndex: idx,
-            itemName: item.comment || item.key || `항목 ${idx + 1}`,
-            field: f.name,
-            matchText: getMatchPreview(f.value, lowerQuery),
-            matchCount: count,
-          });
-        }
-      });
-    });
-
-    // Regex 검색 - pattern(in), replacement(out) 포함
-    const regex = data?.module?.regex || data?.regex || [];
-    regex.forEach((item: any, idx: number) => {
-      const fields = [
-        { name: 'comment', label: '이름', value: item.comment || '' },
-        { name: 'in', label: 'pattern', value: item.in || '' },
-        { name: 'out', label: 'replacement', value: item.out || '' },
-      ];
-      fields.forEach(f => {
-        const count = countMatches(f.value, lowerQuery);
-        if (count > 0) {
-          results.push({
-            tab: 'regex',
-            tabLabel: '⚙️ Regex',
-            itemIndex: idx,
-            itemName: item.comment || `Regex ${idx + 1}`,
-            field: f.label,
-            matchText: getMatchPreview(f.value, lowerQuery),
-            matchCount: count,
-          });
-        }
-      });
-    });
-
-    // Trigger 검색 - effect 내부 code까지 검색
-    const trigger = data?.module?.trigger || data?.trigger || [];
-    trigger.forEach((item: any, idx: number) => {
-      // effect 내부 코드 추출
-      let effectCode = '';
-      if (item.effect && Array.isArray(item.effect)) {
-        item.effect.forEach((eff: any) => {
-          if (eff.code) effectCode += eff.code + '\n';
-          if (eff.value) effectCode += JSON.stringify(eff.value) + '\n';
-        });
-      }
-      
-      // conditions 내부도 문자열화
-      let conditionsStr = '';
-      if (item.conditions && Array.isArray(item.conditions)) {
-        conditionsStr = JSON.stringify(item.conditions);
-      }
-      
-      const fields = [
-        { name: 'comment', label: '이름', value: item.comment || '' },
-        { name: 'regex', label: 'regex', value: item.regex || '' },
-        { name: 'conditions', label: 'conditions', value: conditionsStr },
-        { name: 'effect', label: 'effect/code', value: effectCode || JSON.stringify(item.effect || []) },
-      ];
-      fields.forEach(f => {
-        const count = countMatches(f.value, lowerQuery);
-        if (count > 0) {
-          results.push({
-            tab: 'trigger',
-            tabLabel: '⚡ Trigger',
-            itemIndex: idx,
-            itemName: item.comment || `Trigger ${idx + 1}`,
-            field: f.label,
-            matchText: getMatchPreview(f.value, lowerQuery),
-            matchCount: count,
-          });
-        }
-      });
-    });
-
-    // 스크립트(backgroundEmbedding) 검색
-    const bgHtml = data?.cardData?.extensions?.risuai?.backgroundHTML || 
-                   data?.module?.backgroundEmbedding || '';
-    if (bgHtml) {
-      const count = countMatches(bgHtml, lowerQuery);
-      if (count > 0) {
-        results.push({
-          tab: 'script',
-          tabLabel: '📜 스크립트',
-          itemIndex: 0,
-          itemName: '백그라운드 임베딩',
-          field: 'backgroundEmbedding',
-          matchText: getMatchPreview(bgHtml, lowerQuery),
-          matchCount: count,
-        });
-      }
-    }
-
-    return results;
-  }
-
-  function countMatches(text: string, query: string): number {
-    const lowerText = text.toLowerCase();
-    let count = 0;
-    let pos = 0;
-    while ((pos = lowerText.indexOf(query, pos)) !== -1) {
-      count++;
-      pos += 1;
-    }
-    return count;
-  }
-
-  function getMatchPreview(text: string, query: string): string {
-    const lowerText = text.toLowerCase();
-    const pos = lowerText.indexOf(query);
-    if (pos === -1) return '';
-    const start = Math.max(0, pos - 20);
-    const end = Math.min(text.length, pos + query.length + 40);
-    let preview = text.substring(start, end);
-    if (start > 0) preview = '...' + preview;
-    if (end < text.length) preview = preview + '...';
-    return preview;
   }
 
   function goToSearchResult(result: GlobalSearchResult) {
@@ -341,6 +204,7 @@
           itemIndex: result.itemIndex,
           field: result.field,
           query: globalSearchQuery,
+          target: result.target,
         },
         bubbles: true,
       });
@@ -402,7 +266,7 @@
         <input
           type="text"
           class="global-search-input"
-          placeholder="전체 검색 (로어북, Regex, Trigger, 스크립트)..."
+          placeholder="전체 검색 (현재 파일 포맷에 맞춰 자동 검색)"
           bind:value={globalSearchQuery}
           on:keydown={handleGlobalSearchKeydown}
         />
@@ -477,7 +341,7 @@
         {:else if activeTab === 'trigger'}
           <TriggerTab data={editedData} on:change={handleDataChange} />
         {:else if activeTab === 'assets'}
-          <AssetTab data={editedData} on:change={handleDataChange} />
+          <AssetTab data={editedData} sourceFileName={fileName} on:change={handleAssetChange} />
         {:else if activeTab === 'script'}
           <ScriptTab data={editedData} {fileType} on:change={handleDataChange} />
         {/if}

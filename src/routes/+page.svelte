@@ -1,9 +1,10 @@
 <script lang="ts">
   import { detectInputFormat, parseCharx, parseRisum, parsePresetAuto, parsePng, parseJpeg } from '$lib/core';
-  import { logger } from '$lib/core/logger';
+  import { debugLog, debugWarn, logger } from '$lib/core/logger';
   import EditorScreen from '$lib/components/editor/EditorScreen.svelte';
 
   const repositoryUrl = 'https://github.com/InoriNatsume/RisuAI-Asset-Extractor';
+  const MAX_INPUT_FILE_BYTES = 512 * 1024 * 1024;
 
   let fileData: any = null;
   let fileName = '';
@@ -17,6 +18,19 @@
   
   // 뷰 모드: 'drop' = 드롭존, 'json' = JSON 뷰어, 'edit' = 편집기
   let viewMode: 'drop' | 'json' | 'edit' = 'drop';
+  let fileInputEl: HTMLInputElement | null = null;
+
+  function revokeAssetBlobUrls(source: any): void {
+    if (!source?.assets || !(source.assets instanceof Map)) {
+      return;
+    }
+
+    for (const asset of source.assets.values()) {
+      if (asset?.dataUrl && typeof asset.dataUrl === 'string' && asset.dataUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(asset.dataUrl);
+      }
+    }
+  }
 
   /**
    * charx 파싱 결과를 UI용 데이터로 변환
@@ -30,33 +44,33 @@
     const risuext = cardData?.extensions?.risuai;
     
     // 디버깅: 실제 구조 확인
-    console.log('[charx] card.spec:', card.spec);
-    console.log('[charx] cardData keys:', Object.keys(cardData || {}));
-    console.log('[charx] extensions keys:', Object.keys(cardData?.extensions || {}));
-    console.log('[charx] risuext keys:', Object.keys(risuext || {}));
-    console.log('[charx] ZIP 파일 목록:', Array.from(assets.keys()));
+    debugLog('[charx] card.spec:', card.spec);
+    debugLog('[charx] cardData keys:', Object.keys(cardData || {}));
+    debugLog('[charx] extensions keys:', Object.keys(cardData?.extensions || {}));
+    debugLog('[charx] risuext keys:', Object.keys(risuext || {}));
+    debugLog('[charx] ZIP 파일 목록:', Array.from(assets.keys()));
     
     // module.risum 확인 - charx 내부에 모듈이 포함되어 있는지
     let moduleData: any = null;
     const moduleRisumData = assets.get('module.risum') || raw?.['module.risum'];
     if (moduleRisumData) {
-      console.log('[charx] module.risum 발견! 크기:', moduleRisumData.length);
+      debugLog('[charx] module.risum 발견! 크기:', moduleRisumData.length);
       try {
         const parsedModule = parseRisum(moduleRisumData);
         moduleData = parsedModule.module;
-        console.log('[charx] module.risum 파싱 성공:', {
+        debugLog('[charx] module.risum 파싱 성공:', {
           name: moduleData?.name,
           regex: moduleData?.regex?.length,
           trigger: moduleData?.trigger?.length,
           backgroundEmbedding: moduleData?.backgroundEmbedding?.substring?.(0, 100)
         });
       } catch (e) {
-        console.warn('[charx] module.risum 파싱 실패:', e);
+        debugWarn('[charx] module.risum 파싱 실패:', e);
       }
     }
     
     // backgroundHTML 로그 추가
-    console.log('[charx] backgroundHTML 확인:', {
+    debugLog('[charx] backgroundHTML 확인:', {
       'risuext.backgroundHTML': risuext?.backgroundHTML?.substring?.(0, 100),
       'moduleData.backgroundEmbedding': moduleData?.backgroundEmbedding?.substring?.(0, 100)
     });
@@ -71,13 +85,13 @@
     // RisuAI 폴더 구조 지원: mode='folder', folder=<parentFolderId>
     const lorebook: any[] = [];
     const charbook = cardData.character_book;
-    console.log('[charx] character_book 구조:', charbook);
+    debugLog('[charx] character_book 구조:', charbook);
     
     if (charbook?.entries) {
       const entries = Array.isArray(charbook.entries) ? charbook.entries : Object.values(charbook.entries);
       
       // 디버그: 첫 5개 엔트리 구조 확인
-      console.log('[charx] 첫 5개 로어북 엔트리:', entries.slice(0, 5).map((e: any) => ({
+      debugLog('[charx] 첫 5개 로어북 엔트리:', entries.slice(0, 5).map((e: any) => ({
         name: e.name || e.comment,
         mode: e.mode,
         folder: e.folder,
@@ -127,7 +141,7 @@
     // 폴더 구조 디버그
     const folders = lorebook.filter(e => e.mode === 'folder');
     const itemsWithFolder = lorebook.filter(e => e.folder);
-    console.log('[charx] 폴더 수:', folders.length, '폴더 내 항목:', itemsWithFolder.length);
+    debugLog('[charx] 폴더 수:', folders.length, '폴더 내 항목:', itemsWithFolder.length);
     
     // Regex 변환 - 여러 가능한 경로에서 탐색
     // 1. module.risum이 있으면 그 안의 regex 사용
@@ -143,7 +157,7 @@
     if (!regex || regex.length === 0) {
       regex = risuext?.customscripts ?? [];
     }
-    console.log('[charx] regex source - module:', moduleData?.regex?.length,
+    debugLog('[charx] regex source - module:', moduleData?.regex?.length,
                 'risuext?.customScripts:', risuext?.customScripts?.length, 
                 'cardData?.customscript:', cardData?.customscript?.length);
     
@@ -158,11 +172,11 @@
     if (!trigger || trigger.length === 0) {
       trigger = cardData?.triggerscript ?? [];
     }
-    console.log('[charx] trigger source - module:', moduleData?.trigger?.length,
+    debugLog('[charx] trigger source - module:', moduleData?.trigger?.length,
                 'risuext?.triggerscript:', risuext?.triggerscript?.length,
                 'cardData?.triggerscript:', cardData?.triggerscript?.length);
     
-    console.log('[charx] 변환 결과 - lorebook:', lorebook.length, 'regex:', regex.length, 'trigger:', trigger.length);
+    debugLog('[charx] 변환 결과 - lorebook:', lorebook.length, 'regex:', regex.length, 'trigger:', trigger.length);
     
     // 에셋 맵 생성
     const assetMap = new Map<string, { id: string; name: string; ext: string; type: string; data: Uint8Array; dataUrl: string; size: number }>();
@@ -171,7 +185,7 @@
     function resolveAssetPath(uri: string): Uint8Array | null {
       if (!uri) return null;
       
-      console.log('[resolveAssetPath] 해석 시도:', uri, 'assetDict keys:', Object.keys(assetDict).slice(0, 5));
+      debugLog('[resolveAssetPath] 해석 시도:', uri, 'assetDict keys:', Object.keys(assetDict).slice(0, 5));
       
       // __asset: 경로
       if (uri.startsWith('__asset:')) {
@@ -189,7 +203,7 @@
       if (uri.startsWith('~risuasset:')) {
         // ~risuasset:assets/filename.ext 형식
         const key = uri.replace('~risuasset:', '');
-        console.log('[resolveAssetPath] ~risuasset 경로:', key);
+        debugLog('[resolveAssetPath] ~risuasset 경로:', key);
         return assetDict[key] || assetDict[key.replace('assets/', '')] || null;
       }
       
@@ -208,7 +222,7 @@
     const useLazyLoading = totalAssetCount > LAZY_THRESHOLD;
     
     if (useLazyLoading) {
-      console.log(`[charx] 대용량 에셋 감지 (${totalAssetCount}개) - 지연 로딩 활성화`);
+      debugLog(`[charx] 대용량 에셋 감지 (${totalAssetCount}개) - 지연 로딩 활성화`);
     }
     
     if (cardData.assets && Array.isArray(cardData.assets)) {
@@ -312,12 +326,12 @@
       }
     }
     
-    console.log('[charx] assetMap size:', assetMap.size, 'first 5 keys:', Array.from(assetMap.keys()).slice(0, 5));
+    debugLog('[charx] assetMap size:', assetMap.size, 'first 5 keys:', Array.from(assetMap.keys()).slice(0, 5));
     
     // 디버그: 첫 에셋의 dataUrl 상태 확인
     const firstAsset = assetMap.values().next().value;
     if (firstAsset) {
-      console.log('[charx] First asset check:', {
+      debugLog('[charx] First asset check:', {
         id: firstAsset.id,
         name: firstAsset.name,
         ext: firstAsset.ext,
@@ -397,7 +411,7 @@
     
     // SSR 환경 체크 - 브라우저에서만 Blob URL 생성 가능
     if (typeof window === 'undefined' || typeof Blob === 'undefined') {
-      console.log('[createDataUrl] SSR 환경 - 스킵');
+      debugLog('[createDataUrl] SSR 환경 - 스킵');
       return '';
     }
     
@@ -447,7 +461,7 @@
       // AssetGod과 동일하게 직접 Uint8Array 전달
       const blob = new Blob([toArrayBuffer(data)], { type: mimeType });
       const url = URL.createObjectURL(blob);
-      console.log('[createDataUrl] 생성됨:', { ext, mimeType, detectedFormat, dataLen: data.length, urlStart: url.slice(0, 50) });
+      debugLog('[createDataUrl] 생성됨:', { ext, mimeType, detectedFormat, dataLen: data.length, urlStart: url.slice(0, 50) });
       return url;
     } catch (e) {
       console.error('Failed to create blob URL:', e);
@@ -495,6 +509,7 @@
   }
 
   async function handleFile(file: File) {
+    revokeAssetBlobUrls(fileData);
     loading = true;
     loadingProgress = 0;
     loadingMessage = '파일 읽는 중...';
@@ -504,6 +519,10 @@
     fileType = '';
 
     try {
+      if (file.size > MAX_INPUT_FILE_BYTES) {
+        throw new Error(`파일이 너무 큽니다. ${Math.round(MAX_INPUT_FILE_BYTES / (1024 * 1024))}MB 이하 파일만 열 수 있습니다.`);
+      }
+
       loadingProgress = 10;
       loadingMessage = '파일 버퍼 생성 중...';
       
@@ -606,6 +625,13 @@
     if (file) handleFile(file);
   }
 
+  function handleDropzoneKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fileInputEl?.click();
+    }
+  }
+
   function formatJson(data: any): string {
     // Map과 Uint8Array를 처리하는 replacer
     const replacer = (key: string, value: any) => {
@@ -668,6 +694,7 @@
   }
 
   function handleClose() {
+    revokeAssetBlobUrls(fileData);
     fileData = null;
     fileName = '';
     fileType = '';
@@ -736,6 +763,7 @@
     on:drop={handleDrop}
     on:dragover={handleDragOver}
     on:dragleave={handleDragLeave}
+    on:keydown={handleDropzoneKeydown}
     role="button"
     tabindex="0"
   >
@@ -760,6 +788,7 @@
         <p>Drop a file here or click to select</p>
         <p class="supported">.charx, .png, .jpg, .risum, .risup</p>
         <input 
+          bind:this={fileInputEl}
           type="file" 
           accept=".charx,.png,.jpg,.jpeg,.risum,.risup,.risupreset" 
           on:change={handleFileInput}

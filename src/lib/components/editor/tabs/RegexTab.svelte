@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from 'svelte';
+  import { debugLog } from '$lib/core/logger';
   import DSLEditor from '../DSLEditor.svelte';
 
   export let data: any;
@@ -54,10 +55,10 @@
     
     if (_mode === 'single' && _idx >= 0 && _idx < _list.length) {
       dslText = regexToDSL([_list[_idx]]);
-      console.log('[RegexTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
+      debugLog('[RegexTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
     } else {
       dslText = regexToDSL(_list);
-      console.log('[RegexTab] All mode - showing all:', _list.length, 'entries');
+      debugLog('[RegexTab] All mode - showing all:', _list.length, 'entries');
     }
   }
 

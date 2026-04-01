@@ -13,6 +13,7 @@ import type {
   TriggerResult,
   TriggerError,
 } from './types';
+import { logger } from '../logger';
 
 /**
  * 트리거 엔진 클래스
@@ -361,7 +362,7 @@ export class TriggerEngine {
       : effect.source;
     
     this.logs.push(value);
-    console.log('[Trigger Log]', value);
+    logger.debug('trigger', '[Trigger Log]', value);
   }
   
   /**

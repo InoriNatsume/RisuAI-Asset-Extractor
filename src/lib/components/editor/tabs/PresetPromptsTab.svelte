@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import DSLEditor from '../DSLEditor.svelte';
+  import type { GlobalSearchTarget } from '$lib/core/search/globalSearch';
 
   export let data: any;
 
@@ -114,6 +115,7 @@
   let editMode: 'original' | 'formatted' = 'original';
   let formattedValue = '';
   let hasFormattedChanges = false;
+  let globalSearchQuery = '';
 
   // promptTemplate이 있으면 template 선택으로 전환
   $: if (promptTemplate.length > 0 && selectedType === 'field' && selectedTemplateIndex === 0) {
@@ -302,6 +304,44 @@
     }
     dispatch('change', newData);
   }
+
+  function handleGlobalSearchResult(event: Event) {
+    const detail = (event as CustomEvent<{
+      query?: string;
+      target?: GlobalSearchTarget;
+      itemIndex?: number;
+    }>).detail;
+
+    if (!detail?.query) return;
+
+    globalSearchQuery = detail.query;
+
+    if (detail.target?.kind === 'field' && detail.target.fieldKey) {
+      selectedType = 'field';
+      selectedFieldKey = detail.target.fieldKey;
+    } else if (detail.target?.kind === 'template' && typeof detail.target.templateIndex === 'number') {
+      selectedType = 'template';
+      selectedTemplateIndex = Math.min(
+        Math.max(detail.target.templateIndex, 0),
+        Math.max(promptTemplate.length - 1, 0)
+      );
+    } else if (typeof detail.itemIndex === 'number' && detail.itemIndex >= 0) {
+      selectedType = 'template';
+      selectedTemplateIndex = Math.min(detail.itemIndex, Math.max(promptTemplate.length - 1, 0));
+    }
+
+    tick().then(() => {
+      dslEditor?.goToSearchResult(0);
+    });
+  }
+
+  onMount(() => {
+    document.addEventListener('highlight-search-result', handleGlobalSearchResult as EventListener);
+  });
+
+  onDestroy(() => {
+    document.removeEventListener('highlight-search-result', handleGlobalSearchResult as EventListener);
+  });
 </script>
 
 <div class="preset-prompts-tab">
@@ -338,6 +378,7 @@
         value={editMode === 'formatted' ? formattedValue : currentValue}
         mode="lorebook"
         placeholder="프롬프트 내용을 입력하세요..."
+        searchQuery={globalSearchQuery}
         on:change={handleTextChange}
       />
     </div>

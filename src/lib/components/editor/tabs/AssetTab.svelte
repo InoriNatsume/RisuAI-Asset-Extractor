@@ -1,11 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { extractImageMetadata, parsePngTextChunks } from '$lib/core/exif';
+  import JSZip from 'jszip';
+  import { extractImageMetadata } from '$lib/core/exif';
   import type { ExtractedMetadata, NAINormalizedMeta } from '$lib/core/exif/types';
   import type { ComfyNormalizedMeta } from '$lib/core/exif/schema/comfyui';
+  import { debugLog, debugWarn } from '$lib/core/logger';
   import ComfyViewerModal from './ComfyViewerModal.svelte';
 
   export let data: any;
+  export let sourceFileName = '';
 
   const dispatch = createEventDispatcher();
 
@@ -30,6 +33,84 @@
   
   // 에셋 dataUrl 캐시 (지연 생성용)
   let dataUrlCache: Map<string, string> = new Map();
+
+  function revokeBlobUrl(url?: string): void {
+    if (url && url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function cleanupCachedBlobUrls(): void {
+    for (const url of dataUrlCache.values()) {
+      revokeBlobUrl(url);
+    }
+    dataUrlCache.clear();
+  }
+
+  function cleanupAssetBlobUrls(): void {
+    if (!data?.assets || !(data.assets instanceof Map)) {
+      return;
+    }
+
+    for (const asset of data.assets.values()) {
+      if (asset && typeof asset === 'object') {
+        revokeBlobUrl(asset.dataUrl);
+      }
+    }
+  }
+
+  function cloneAssetContainerData(source: any): any {
+    const clone = { ...source };
+
+    if (source?.assets instanceof Map) {
+      clone.assets = new Map(
+        Array.from(source.assets.entries(), ([id, asset]) => [
+          id,
+          asset && typeof asset === 'object' ? { ...asset } : asset
+        ])
+      );
+    }
+
+    if (Array.isArray(source?.additionalAssets)) {
+      clone.additionalAssets = source.additionalAssets.map((asset: any) =>
+        Array.isArray(asset) ? [...asset] : asset
+      );
+    }
+
+    return clone;
+  }
+
+  function assetDataToBytes(data: AssetEntry['data'] | unknown): Uint8Array | null {
+    if (!data) return null;
+    if (data instanceof Uint8Array) return data;
+    if (ArrayBuffer.isView(data)) {
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    if (typeof data === 'string') {
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+    if (typeof (data as ArrayLike<number>).length === 'number') {
+      return new Uint8Array(data as ArrayLike<number>);
+    }
+    return null;
+  }
+
+  async function hashAssetBytes(bytes: Uint8Array): Promise<string> {
+    if (globalThis.crypto?.subtle) {
+      const digest = await globalThis.crypto.subtle.digest('SHA-256', toArrayBuffer(bytes));
+      return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    let hash = 0x811c9dc5;
+    for (const byte of bytes) {
+      hash ^= byte;
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return `fnv1a-${bytes.length}-${(hash >>> 0).toString(16)}`;
+  }
   
   onMount(() => {
     // Intersection Observer for lazy loading thumbnails
@@ -48,6 +129,8 @@
   
   onDestroy(() => {
     thumbnailObserver?.disconnect();
+    cleanupCachedBlobUrls();
+    cleanupAssetBlobUrls();
   });
   
   /**
@@ -131,16 +214,16 @@
     
     // 데이터가 없으면 빈 문자열
     if (!asset.data) {
-      console.warn('[getAssetDataUrl] No data for:', asset.id);
+      debugWarn('[getAssetDataUrl] No data for:', asset.id);
       return '';
     }
 
     if ((asset.size || 0) > AUTO_PREVIEW_BYTE_LIMIT) {
-      console.log('[getAssetDataUrl] Skip preview for large asset:', asset.id, asset.size);
+      debugLog('[getAssetDataUrl] Skip preview for large asset:', asset.id, asset.size);
       return '';
     }
     
-    console.log('[getAssetDataUrl] Generating for:', asset.id, 'dataType:', asset.data?.constructor?.name);
+    debugLog('[getAssetDataUrl] Generating for:', asset.id, 'dataType:', asset.data?.constructor?.name);
     
     // 데이터에서 dataUrl 생성
     try {
@@ -149,7 +232,7 @@
       if (asset.data instanceof Uint8Array) {
         dataUrl = createDataUrlFromBytes(asset.data, asset.ext);
       } else if (ArrayBuffer.isView(asset.data)) {
-        const bytes = new Uint8Array((asset.data as any).buffer);
+        const bytes = new Uint8Array(asset.data.buffer, asset.data.byteOffset, asset.data.byteLength);
         dataUrl = createDataUrlFromBytes(bytes, asset.ext);
       } else if (typeof asset.data === 'string') {
         dataUrl = `data:${getMimeType(asset.ext)};base64,${asset.data}`;
@@ -158,7 +241,7 @@
         dataUrl = createDataUrlFromBytes(bytes, asset.ext);
       }
       
-      console.log('[getAssetDataUrl] Generated:', asset.id, 'urlLen:', dataUrl.length);
+      debugLog('[getAssetDataUrl] Generated:', asset.id, 'urlLen:', dataUrl.length);
       
       // 캐시에 저장
       if (dataUrl) {
@@ -265,8 +348,8 @@
   function getAssetList(data: any): AssetEntry[] {
     if (!data) return [];
     
-    console.log('[AssetTab] getAssetList called, data.assets:', data.assets);
-    console.log('[AssetTab] data.assets instanceof Map:', data.assets instanceof Map);
+    debugLog('[AssetTab] getAssetList called, data.assets:', data.assets);
+    debugLog('[AssetTab] data.assets instanceof Map:', data.assets instanceof Map);
     
     // risum/charx 모듈 에셋 (새 구조: Map<string, {name, ext, data: Uint8Array, dataUrl?}>)
     if (data.assets && data.assets instanceof Map) {
@@ -274,12 +357,12 @@
       const assetCount = entries.length;
       const useLazyLoading = assetCount > LAZY_LOADING_ASSET_THRESHOLD;
       
-      console.log('[AssetTab] Map entries count:', assetCount, 'useLazyLoading:', useLazyLoading);
+      debugLog('[AssetTab] Map entries count:', assetCount, 'useLazyLoading:', useLazyLoading);
       
       // 첫 번째 에셋 구조 확인
       if (entries.length > 0) {
         const [firstId, firstAsset] = entries[0];
-        console.log('[AssetTab] First asset:', {
+        debugLog('[AssetTab] First asset:', {
           id: firstId,
           name: firstAsset.name,
           ext: firstAsset.ext,
@@ -309,7 +392,7 @@
           if (bytes) {
             const detectedFormat = detectImageFormat(bytes);
             if (detectedFormat && detectedFormat !== ext) {
-              console.log('[AssetTab] 확장자 불일치 감지 (early):', { 메타: ext, 실제: detectedFormat, id });
+              debugLog('[AssetTab] 확장자 불일치 감지 (early):', { 메타: ext, 실제: detectedFormat, id });
               displayExt = detectedFormat;
             }
           }
@@ -361,14 +444,14 @@
           // 실제 파일 포맷 감지 (메타데이터와 다를 수 있음) - 이미 위에서 처리됨
           const detectedFormat = detectImageFormat(bytes);
           if (detectedFormat && detectedFormat !== displayExt) {
-            console.log('[AssetTab] 확장자 불일치 감지 (late):', { 메타: ext, 실제: detectedFormat, id });
+            debugLog('[AssetTab] 확장자 불일치 감지 (late):', { 메타: ext, 실제: detectedFormat, id });
             displayExt = detectedFormat;
           }
           
           try {
             // AssetGod 방식: magic bytes 우선 감지
             dataUrl = size > AUTO_PREVIEW_BYTE_LIMIT ? '' : createDataUrlFromBytes(bytes, ext);
-            console.log('[AssetTab] Blob URL 생성:', { id, ext: displayExt, size, urlLen: dataUrl.length });
+            debugLog('[AssetTab] Blob URL 생성:', { id, ext: displayExt, size, urlLen: dataUrl.length });
           } catch (e) {
             console.error('Asset conversion error:', e);
           }
@@ -391,7 +474,7 @@
       
       // 디버그: 첫 3개 에셋 상태 확인
       if (result.length > 0) {
-        console.log('[AssetTab] First 3 assets:', result.slice(0, 3).map(a => ({
+        debugLog('[AssetTab] First 3 assets:', result.slice(0, 3).map(a => ({
           id: a.id,
           name: a.name,
           ext: a.ext,
@@ -570,14 +653,14 @@
   
   /** 상세 뷰로 전환 (개별 이미지 탭) */
   async function openDetailView(id: string) {
-    console.log('[AssetTab] openDetailView 호출:', id);
+    debugLog('[AssetTab] openDetailView 호출:', id);
     previousMode = viewMode === 'detail' ? previousMode : viewMode;
     selectedId = id;
     viewMode = 'detail';
     
     // EXIF 로드 - 이미지 타입이거나 x-risu-asset인 경우 모두 시도
     const asset = assetList.find(a => a.id === id);
-    console.log('[AssetTab] 에셋 찾음:', asset ? { id: asset.id, type: asset.type, hasData: !!asset.data } : 'null');
+    debugLog('[AssetTab] 에셋 찾음:', asset ? { id: asset.id, type: asset.type, hasData: !!asset.data } : 'null');
     
     // 이미지 관련 타입 확인 (image, x-risu-asset 등)
     const isImageLike = asset && asset.data && (
@@ -589,7 +672,7 @@
     if (isImageLike) {
       await loadExifData(asset);
     } else {
-      console.log('[AssetTab] EXIF 로드 건너뜀 - 이미지가 아님');
+      debugLog('[AssetTab] EXIF 로드 건너뜀 - 이미지가 아님');
       exifData = null;
     }
   }
@@ -603,7 +686,7 @@
   
   /** EXIF 데이터 로드 */
   async function loadExifData(asset: AssetEntry) {
-    console.log('[AssetTab] loadExifData 호출:', {
+    debugLog('[AssetTab] loadExifData 호출:', {
       id: asset.id,
       name: asset.name,
       ext: asset.ext,
@@ -622,7 +705,7 @@
       if (asset.data instanceof Uint8Array) {
         // ArrayBuffer를 명시적으로 복사
         buffer = toArrayBuffer(asset.data);
-        console.log('[AssetTab] Uint8Array -> ArrayBuffer:', buffer.byteLength, 'bytes');
+        debugLog('[AssetTab] Uint8Array -> ArrayBuffer:', buffer.byteLength, 'bytes');
       } else if (typeof asset.data === 'string') {
         // base64 -> ArrayBuffer
         const binary = atob(asset.data);
@@ -631,14 +714,14 @@
           bytes[i] = binary.charCodeAt(i);
         }
         buffer = toArrayBuffer(bytes);
-        console.log('[AssetTab] base64 -> ArrayBuffer:', buffer.byteLength, 'bytes');
+        debugLog('[AssetTab] base64 -> ArrayBuffer:', buffer.byteLength, 'bytes');
       } else {
         throw new Error('Unknown data format');
       }
       
-      console.log('[AssetTab] extractImageMetadata 호출 시작');
+      debugLog('[AssetTab] extractImageMetadata 호출 시작');
       exifData = await extractImageMetadata(buffer);
-      console.log('[AssetTab] extractImageMetadata 결과:', exifData);
+      debugLog('[AssetTab] extractImageMetadata 결과:', exifData);
     } catch (e) {
       console.error('EXIF extraction error:', e);
       exifError = e instanceof Error ? e.message : 'EXIF 추출 실패';
@@ -700,7 +783,7 @@
   
   /** 확장자 제거: 파일명/ID에서 중복 확장자 정리 */
   function removeExtensions() {
-    const newData = structuredClone(data);
+    const newData = cloneAssetContainerData(data);
     let modified = false;
     let changes: string[] = [];
     
@@ -764,13 +847,11 @@
     
     for (const asset of assetList) {
       if (!asset.data) continue;
-      
-      // 간단한 해시: 크기 + 첫/끝 바이트
-      const bytes = asset.data instanceof Uint8Array 
-        ? asset.data 
-        : new Uint8Array([...atob(asset.data)].map(c => c.charCodeAt(0)));
-      
-      const hash = `${bytes.length}-${bytes[0]}-${bytes[bytes.length - 1]}-${bytes[Math.floor(bytes.length / 2)]}`;
+
+      const bytes = assetDataToBytes(asset.data);
+      if (!bytes) continue;
+
+      const hash = await hashAssetBytes(bytes);
       
       if (!hashMap.has(hash)) {
         hashMap.set(hash, []);
@@ -803,7 +884,12 @@
   }
   
   function deleteAssetSilent(id: string) {
-    const newData = structuredClone(data);
+    const oldAsset = data?.assets instanceof Map ? data.assets.get(id) : null;
+    revokeBlobUrl(oldAsset?.dataUrl);
+    revokeBlobUrl(dataUrlCache.get(id));
+    dataUrlCache.delete(id);
+
+    const newData = cloneAssetContainerData(data);
 
     if (newData.assets && newData.assets instanceof Map) {
       newData.assets.delete(id);
@@ -930,7 +1016,7 @@
   // 초기 로드 시 filteredAssetList 설정
   $: if (assetList.length > 0 && filteredAssetList.length === 0 && !searchQuery) {
     filteredAssetList = assetList;
-    console.log('[AssetTab] Initial filteredAssetList set:', filteredAssetList.length);
+    debugLog('[AssetTab] Initial filteredAssetList set:', filteredAssetList.length);
   }
   
   async function updateFilteredList() {
@@ -1021,7 +1107,7 @@
   }
 
   function addAsset(name: string, base64Data: string) {
-    const newData = structuredClone(data);
+    const newData = cloneAssetContainerData(data);
     const id = crypto.randomUUID();
     const ext = getExtension(name);
     
@@ -1044,7 +1130,12 @@
   function deleteAsset(id: string) {
     if (!confirm('이 에셋을 삭제하시겠습니까?')) return;
 
-    const newData = structuredClone(data);
+    const oldAsset = data?.assets instanceof Map ? data.assets.get(id) : null;
+    revokeBlobUrl(oldAsset?.dataUrl);
+    revokeBlobUrl(dataUrlCache.get(id));
+    dataUrlCache.delete(id);
+
+    const newData = cloneAssetContainerData(data);
 
     if (newData.assets && newData.assets instanceof Map) {
       newData.assets.delete(id);
@@ -1061,7 +1152,7 @@
   function downloadAsset(asset: AssetEntry) {
     try {
       const link = document.createElement('a');
-      const filename = asset.name.includes('.') ? asset.name : `${asset.name}.${asset.ext}`;
+      const filename = getNormalizedAssetFilename(asset);
       
       // 1순위: dataUrl이 이미 있으면 사용
       if (asset.dataUrl && asset.dataUrl.length > 0) {
@@ -1168,7 +1259,7 @@
       return;
     }
     const assets = assetList.filter(a => selectedAssetIds.has(a.id));
-    await downloadAssetsAsZip(assets, 'selected_assets.zip');
+    await downloadAssetsAsZip(assets, getAssetZipName(true));
   }
 
   async function downloadAllAssets() {
@@ -1176,113 +1267,74 @@
       alert('다운로드할 에셋이 없습니다.');
       return;
     }
-    await downloadAssetsAsZip(assetList, 'all_assets.zip');
+    await downloadAssetsAsZip(assetList, getAssetZipName(false));
   }
 
-  // 간단한 ZIP 생성 유틸리티 (라이브러리 없이)
-  function createZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
-    const localHeaders: Uint8Array[] = [];
-    const centralHeaders: Uint8Array[] = [];
-    let offset = 0;
-
-    for (const file of files) {
-      const nameBytes = new TextEncoder().encode(file.name);
-      const crc = crc32(file.data);
-      
-      // Local file header
-      const localHeader = new Uint8Array(30 + nameBytes.length);
-      const localView = new DataView(localHeader.buffer);
-      localView.setUint32(0, 0x04034b50, true); // signature
-      localView.setUint16(4, 20, true); // version needed
-      localView.setUint16(6, 0, true); // flags
-      localView.setUint16(8, 0, true); // compression (store)
-      localView.setUint16(10, 0, true); // mod time
-      localView.setUint16(12, 0, true); // mod date
-      localView.setUint32(14, crc, true); // crc32
-      localView.setUint32(18, file.data.length, true); // compressed size
-      localView.setUint32(22, file.data.length, true); // uncompressed size
-      localView.setUint16(26, nameBytes.length, true); // filename length
-      localView.setUint16(28, 0, true); // extra field length
-      localHeader.set(nameBytes, 30);
-      
-      localHeaders.push(localHeader);
-      localHeaders.push(file.data);
-      
-      // Central directory header
-      const centralHeader = new Uint8Array(46 + nameBytes.length);
-      const centralView = new DataView(centralHeader.buffer);
-      centralView.setUint32(0, 0x02014b50, true); // signature
-      centralView.setUint16(4, 20, true); // version made by
-      centralView.setUint16(6, 20, true); // version needed
-      centralView.setUint16(8, 0, true); // flags
-      centralView.setUint16(10, 0, true); // compression
-      centralView.setUint16(12, 0, true); // mod time
-      centralView.setUint16(14, 0, true); // mod date
-      centralView.setUint32(16, crc, true); // crc32
-      centralView.setUint32(20, file.data.length, true); // compressed size
-      centralView.setUint32(24, file.data.length, true); // uncompressed size
-      centralView.setUint16(28, nameBytes.length, true); // filename length
-      centralView.setUint16(30, 0, true); // extra field length
-      centralView.setUint16(32, 0, true); // comment length
-      centralView.setUint16(34, 0, true); // disk number
-      centralView.setUint16(36, 0, true); // internal attrs
-      centralView.setUint32(38, 0, true); // external attrs
-      centralView.setUint32(42, offset, true); // local header offset
-      centralHeader.set(nameBytes, 46);
-      
-      centralHeaders.push(centralHeader);
-      offset += localHeader.length + file.data.length;
-    }
-    
-    const centralDirOffset = offset;
-    let centralDirSize = 0;
-    for (const h of centralHeaders) centralDirSize += h.length;
-    
-    // End of central directory
-    const endRecord = new Uint8Array(22);
-    const endView = new DataView(endRecord.buffer);
-    endView.setUint32(0, 0x06054b50, true); // signature
-    endView.setUint16(4, 0, true); // disk number
-    endView.setUint16(6, 0, true); // central dir disk
-    endView.setUint16(8, files.length, true); // entries on disk
-    endView.setUint16(10, files.length, true); // total entries
-    endView.setUint32(12, centralDirSize, true); // central dir size
-    endView.setUint32(16, centralDirOffset, true); // central dir offset
-    endView.setUint16(20, 0, true); // comment length
-    
-    // Combine all parts
-    const totalSize = offset + centralDirSize + 22;
-    const result = new Uint8Array(totalSize);
-    let pos = 0;
-    for (const part of localHeaders) { result.set(part, pos); pos += part.length; }
-    for (const part of centralHeaders) { result.set(part, pos); pos += part.length; }
-    result.set(endRecord, pos);
-    
-    return result;
+  function getAssetZipName(isSelectedOnly: boolean): string {
+    const baseName = sourceFileName.replace(/\.[^.]+$/, '').trim() || 'assets';
+    return isSelectedOnly ? `${baseName}.selected-assets.zip` : `${baseName}.zip`;
   }
 
-  // CRC32 계산
-  function crc32(data: Uint8Array): number {
-    let crc = 0xFFFFFFFF;
-    const table = getCrc32Table();
-    for (let i = 0; i < data.length; i++) {
-      crc = (crc >>> 8) ^ table[(crc ^ data[i]) & 0xFF];
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
+  function normalizeOutputExtension(ext: string): string {
+    const lower = (ext || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    return lower === 'jpeg' ? 'jpg' : lower;
   }
 
-  let crc32Table: Uint32Array | null = null;
-  function getCrc32Table(): Uint32Array {
-    if (crc32Table) return crc32Table;
-    crc32Table = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let j = 0; j < 8; j++) {
-        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      }
-      crc32Table[i] = c >>> 0;
+  function stripKnownTrailingExtensions(name: string): string {
+    return name.replace(/(\.(png|jpg|jpeg|gif|webp|avif|bmp|mp3|wav|ogg|flac|m4a|mp4|webm|mkv|json|txt))+$/i, '');
+  }
+
+  function sanitizeOutputFileName(name: string): string {
+    const basename = name
+      .replace(/\\/g, '/')
+      .split('/')
+      .filter((segment) => segment && segment !== '.' && segment !== '..')
+      .pop() ?? 'unnamed';
+
+    const sanitized = basename
+      .replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_')
+      .replace(/^\.+/, '')
+      .trim();
+
+    return sanitized || 'unnamed';
+  }
+
+  function getNormalizedAssetFilename(asset: AssetEntry): string {
+    const rawName = (asset.name || '').trim();
+    const fallbackName = asset.id || 'unnamed';
+    const baseName = sanitizeOutputFileName(rawName || fallbackName);
+    const ext = normalizeOutputExtension(asset.ext || '');
+
+    if (!ext) {
+      return baseName;
     }
-    return crc32Table;
+
+    const stem = sanitizeOutputFileName(stripKnownTrailingExtensions(baseName).trim() || 'unnamed');
+    return `${stem}.${ext}`;
+  }
+
+  function buildUniqueZipEntryName(fileName: string, usedNames: Set<string>): string {
+    const safeFileName = sanitizeOutputFileName(fileName);
+
+    if (!usedNames.has(safeFileName)) {
+      usedNames.add(safeFileName);
+      return safeFileName;
+    }
+
+    const lastDot = safeFileName.lastIndexOf('.');
+    const hasExtension = lastDot > 0;
+    const stem = hasExtension ? safeFileName.slice(0, lastDot) : safeFileName;
+    const ext = hasExtension ? safeFileName.slice(lastDot) : '';
+    let counter = 2;
+    let candidate = `${stem} (${counter})${ext}`;
+
+    while (usedNames.has(candidate)) {
+      counter += 1;
+      candidate = `${stem} (${counter})${ext}`;
+    }
+
+    usedNames.add(candidate);
+    return candidate;
   }
 
   async function downloadAssetsAsZip(assets: AssetEntry[], zipName: string) {
@@ -1294,7 +1346,7 @@
       const files: { name: string; data: Uint8Array }[] = [];
       
       for (const asset of assets) {
-        const filename = asset.name.includes('.') ? asset.name : `${asset.name}.${asset.ext}`;
+        const filename = getNormalizedAssetFilename(asset);
         let data: Uint8Array | null = null;
         
         // dataUrl에서 데이터 추출
@@ -1317,17 +1369,7 @@
         
         // asset.data에서 데이터 추출
         if (!data && asset.data) {
-          if (asset.data instanceof Uint8Array) {
-            data = asset.data;
-          } else if (ArrayBuffer.isView(asset.data)) {
-            data = new Uint8Array(asset.data.buffer, asset.data.byteOffset, asset.data.byteLength);
-          } else if (typeof asset.data === 'string') {
-            const binary = atob(asset.data);
-            data = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i);
-          } else if (typeof (asset.data as ArrayLike<number>).length === 'number') {
-            data = new Uint8Array(asset.data as ArrayLike<number>);
-          }
+          data = assetDataToBytes(asset.data);
         }
         
         if (data) {
@@ -1341,8 +1383,18 @@
       }
       
       // ZIP 생성 및 다운로드
-      const zipData = createZip(files);
-      const blob = new Blob([zipData.buffer as ArrayBuffer], { type: 'application/zip' });
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+
+      for (const file of files) {
+        const entryName = buildUniqueZipEntryName(file.name, usedNames);
+        zip.file(entryName, file.data, { binary: true, compression: 'STORE' });
+      }
+
+      const blob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'STORE'
+      });
       const url = URL.createObjectURL(blob);
       
       const link = document.createElement('a');
@@ -1362,7 +1414,7 @@
     return new Promise((resolve, reject) => {
       try {
         const link = document.createElement('a');
-        const filename = asset.name.includes('.') ? asset.name : `${asset.name}.${asset.ext}`;
+        const filename = getNormalizedAssetFilename(asset);
         
         if (asset.dataUrl && asset.dataUrl.length > 0) {
           if (asset.dataUrl.startsWith('blob:')) {
@@ -1525,6 +1577,9 @@
       // dataUrl 재생성
       const mime = getMimeType(ext);
       const blob = new Blob([uint8Array], { type: mime });
+      revokeBlobUrl(assetData.dataUrl);
+      revokeBlobUrl(dataUrlCache.get(replaceTargetId));
+      dataUrlCache.delete(replaceTargetId);
       assetData.dataUrl = URL.createObjectURL(blob);
       
       data.assets.set(replaceTargetId, assetData);
@@ -2012,7 +2067,7 @@
           <img
             src={selectedAssetUrl}
             alt={selectedAsset.name}
-            on:error={() => console.log('[AssetTab] 상세 이미지 로드 실패:', selectedAsset.id)}
+            on:error={() => debugLog('[AssetTab] 상세 이미지 로드 실패:', selectedAsset.id)}
           />
         {:else if selectedAsset.type === 'audio' && selectedAssetUrl}
           <audio controls src={selectedAssetUrl}>

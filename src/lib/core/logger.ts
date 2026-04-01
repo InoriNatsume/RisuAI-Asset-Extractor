@@ -1,3 +1,5 @@
+import { browser, dev } from '$app/environment';
+
 /**
  * Logger
  * 로깅 시스템
@@ -17,13 +19,81 @@ export interface LogEntry {
 }
 
 type LogListener = (entry: LogEntry) => void;
+type DebugConsoleMethod = 'debug' | 'log' | 'warn' | 'error';
+
+export const DEBUG_QUERY_KEY = 'debug';
+export const DEBUG_STORAGE_KEY = 'risu_debug';
+
+function parseDebugFlag(value: string | null): boolean | null {
+  if (!value) return null;
+
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'on', 'yes'].includes(normalized)) return true;
+  if (['0', 'false', 'off', 'no'].includes(normalized)) return false;
+  return null;
+}
+
+function getDebugOverride(): boolean | null {
+  if (!browser) {
+    return null;
+  }
+
+  try {
+    const queryFlag = parseDebugFlag(new URLSearchParams(window.location.search).get(DEBUG_QUERY_KEY));
+    if (queryFlag !== null) {
+      return queryFlag;
+    }
+  } catch {
+    // Ignore URL parsing failures and fall back to localStorage/defaults.
+  }
+
+  try {
+    return parseDebugFlag(window.localStorage.getItem(DEBUG_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+export function isVerboseDebugEnabled(): boolean {
+  const override = getDebugOverride();
+  if (override !== null) {
+    return override;
+  }
+
+  return dev;
+}
+
+function callConsole(method: DebugConsoleMethod, args: unknown[]): void {
+  if (typeof console === 'undefined') {
+    return;
+  }
+
+  console[method](...args);
+}
+
+export function debugLog(...args: unknown[]): void {
+  if (isVerboseDebugEnabled()) {
+    callConsole('log', args);
+  }
+}
+
+export function debugWarn(...args: unknown[]): void {
+  if (isVerboseDebugEnabled()) {
+    callConsole('warn', args);
+  }
+}
+
+export function debugError(...args: unknown[]): void {
+  if (isVerboseDebugEnabled()) {
+    callConsole('error', args);
+  }
+}
 
 class Logger {
   private logs: LogEntry[] = [];
   private maxLogs = 1000;
   private listeners: Set<LogListener> = new Set();
   private enabled = true;
-  private verboseMode = true; // 기본으로 상세 모드 활성화
 
   log(level: LogLevel, category: LogCategory, message: string, data?: unknown): void {
     if (!this.enabled) return;
@@ -47,7 +117,7 @@ class Logger {
     // 콘솔 출력 조건:
     // - verboseMode: 모든 로그 출력
     // - 아니면: WARN/ERROR만 출력
-    const shouldLog = this.verboseMode || level === 'WARN' || level === 'ERROR';
+    const shouldLog = isVerboseDebugEnabled() || level === 'WARN' || level === 'ERROR';
     
     if (shouldLog && typeof console !== 'undefined') {
       const method = level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : level === 'DEBUG' ? 'debug' : 'log';

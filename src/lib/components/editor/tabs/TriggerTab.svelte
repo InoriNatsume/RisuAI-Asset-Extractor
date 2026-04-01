@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from 'svelte';
+  import { debugLog } from '$lib/core/logger';
   import DSLEditor from '../DSLEditor.svelte';
 
   export let data: any;
@@ -54,10 +55,10 @@
     
     if (_mode === 'single' && _idx >= 0 && _idx < _list.length) {
       dslText = triggerToDSL([_list[_idx]]);
-      console.log('[TriggerTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
+      debugLog('[TriggerTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
     } else {
       dslText = triggerToDSL(_list);
-      console.log('[TriggerTab] All mode - showing all:', _list.length, 'entries');
+      debugLog('[TriggerTab] All mode - showing all:', _list.length, 'entries');
     }
   }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from 'svelte';
+  import { debugLog } from '$lib/core/logger';
   import DSLEditor from '../DSLEditor.svelte';
 
   export let data: any;
@@ -57,14 +58,14 @@
     if (_mode === 'single' && _idx >= 0 && _idx < _list.length) {
       // 개별 항목
       dslText = lorebookToDSL([_list[_idx]]);
-      console.log('[LorebookTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
+      debugLog('[LorebookTab] Single mode - showing entry:', _idx, _list[_idx]?.comment);
     } else if (_mode === 'folder' && _folderId) {
       // 폴더 단위 - 해당 폴더 내 모든 항목
       const folder = _grouped.find(g => g.id === _folderId);
       if (folder) {
         const entries = folder.entries.map(e => e.entry);
         dslText = lorebookToDSL(entries);
-        console.log('[LorebookTab] Folder mode - showing folder:', folder.name, 'with', entries.length, 'entries');
+        debugLog('[LorebookTab] Folder mode - showing folder:', folder.name, 'with', entries.length, 'entries');
       } else {
         dslText = lorebookToDSL(_list);
       }
@@ -90,7 +91,7 @@
     const groups: FolderGroup[] = [];
     const folderMap = new Map<string, FolderGroup>();
     
-    console.log('[LorebookTab] groupByFolders 호출, 총 항목:', entries.length);
+    debugLog('[LorebookTab] groupByFolders 호출, 총 항목:', entries.length);
     
     // 1. 폴더 추출 (mode === 'folder')
     entries.forEach((entry, idx) => {
@@ -103,7 +104,7 @@
         }
         if (!folderId) folderId = `folder-${idx}`;
         
-        console.log('[LorebookTab] 폴더 발견:', { folderId, name: entry.comment });
+        debugLog('[LorebookTab] 폴더 발견:', { folderId, name: entry.comment });
         
         folderMap.set(folderId, {
           id: folderId,
@@ -113,7 +114,7 @@
       }
     });
     
-    console.log('[LorebookTab] 발견된 폴더 수:', folderMap.size, 'IDs:', [...folderMap.keys()]);
+    debugLog('[LorebookTab] 발견된 폴더 수:', folderMap.size, 'IDs:', [...folderMap.keys()]);
     
     // 2. 루트 그룹 (폴더에 속하지 않은 항목)
     const rootGroup: FolderGroup = { id: null, name: '(루트)', entries: [] };
@@ -135,7 +136,7 @@
       } else {
         // 폴더가 지정됐지만 찾을 수 없는 경우 디버그
         if (entry.folder) {
-          console.log('[LorebookTab] 폴더 매칭 실패:', { entryName: entry.comment, originalFolder: entry.folder, extractedId: parentFolder, availableFolders: [...folderMap.keys()] });
+          debugLog('[LorebookTab] 폴더 매칭 실패:', { entryName: entry.comment, originalFolder: entry.folder, extractedId: parentFolder, availableFolders: [...folderMap.keys()] });
         }
         rootGroup.entries.push({ entry, originalIndex: idx });
       }
@@ -149,7 +150,7 @@
       groups.push(rootGroup);
     }
     
-    console.log('[LorebookTab] 최종 그룹:', groups.map(g => ({ name: g.name, count: g.entries.length })));
+    debugLog('[LorebookTab] 최종 그룹:', groups.map(g => ({ name: g.name, count: g.entries.length })));
     
     return groups;
   }

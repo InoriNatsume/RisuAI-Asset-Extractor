@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { debugLog } from '$lib/core/logger';
 
   export let data: any;
   export let fileType: 'charx' | 'jpeg' | 'png' | 'risum' = 'risum';
@@ -10,7 +11,7 @@
   $: scriptData = getScriptData(data, fileType);
 
   function getScriptData(data: any, type: string) {
-    console.log('[ScriptTab] getScriptData called:', { type, dataKeys: Object.keys(data || {}) });
+    debugLog('[ScriptTab] getScriptData called:', { type, dataKeys: Object.keys(data || {}) });
     
     // charx, jpeg, png 모두 동일한 CCv3 구조
     if (type === 'charx' || type === 'jpeg' || type === 'png') {
@@ -22,7 +23,7 @@
       // charx 내부 module.risum에서 backgroundEmbedding 확인
       const moduleData = data?._moduleData;
       
-      console.log('[ScriptTab] charx/jpeg/png paths:', {
+      debugLog('[ScriptTab] charx/jpeg/png paths:', {
         hasCardData: !!data?.cardData,
         hasCard: !!data?.card,
         hasModuleData: !!moduleData,
@@ -42,7 +43,7 @@
     } else {
       // risum 모듈
       const module = data?.module || data;
-      console.log('[ScriptTab] risum paths:', {
+      debugLog('[ScriptTab] risum paths:', {
         module_keys: Object.keys(module || {}),
         backgroundEmbedding: module?.backgroundEmbedding,
       });
